@@ -1,0 +1,27 @@
+[package]
+name = "newt-todo-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Enables JsonSchema derives on the param structs (needed by the MCP crate).
+schemars = ["dep:schemars"]
+
+[dependencies]
+newt-todo-core = { workspace = true }
+newt-todo-providers = { workspace = true }
+newt-todo-auth = { workspace = true }
+reqwest = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+directories = { workspace = true }
+schemars = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = { workspace = true }
+wiremock = { workspace = true }

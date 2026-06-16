@@ -1,0 +1,23 @@
+[package]
+name = "newt-todo-mcp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "newt-todo-mcp"
+path = "src/main.rs"
+
+[dependencies]
+newt-todo-core = { workspace = true }
+newt-todo-service = { workspace = true, features = ["schemars"] }
+newt-todo-auth = { workspace = true }
+rmcp = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-std"] }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-std"] }

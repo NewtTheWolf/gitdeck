@@ -1,0 +1,38 @@
+Newt Todo — third-party attributions
+=====================================
+
+Design palette & UX inspiration: gitdeck
+----------------------------------------
+The dark design system in this app (the color/surface/accent/shadow palette)
+and the sidebar app-shell layout are adapted from gitdeck.
+
+  Project: gitdeck
+  Source:  https://github.com/debba/gitdeck
+  Branch:  feat/multi-account-provider
+  Files referenced: src/styles/tokens.css, src/styles/layout-sidebar.css,
+                    src/components/AccountSwitcher.tsx (look/feel inspiration)
+  License: MIT (Copyright (c) debba)
+
+The MIT License permits this reuse with attribution. gitdeck's palette was
+re-expressed as a native Tailwind v4 theme (an `@theme` block in src/app.css),
+preserving the exact hex/rgba values; no gitdeck CSS file is bundled. The shell
+markup was re-implemented for this app's data model rather than copied verbatim.
+
+Dashboard view structure & filter/sort logic: gitdeck
+-----------------------------------------------------
+The Repos / Issues / Pull Requests dashboard sections port gitdeck's view
+STRUCTURE and behavior — not its CSS. Reference files:
+
+  src/components/views/{RepoGrid,IssueList,PullRequestList}.tsx
+  src/utils/dashboard.ts   (filter / sort logic)
+  src/utils/format.ts      (formatRelativeTime, formatNumber)
+  src/utils/colors.ts      (GitHub label color handling)
+  License: MIT (Copyright (c) debba) — https://github.com/debba/gitdeck
+
+The dense-row layout, field selection, label-color handling, relative-time
+formatting and the issue/PR filter+sort helpers were re-implemented for this
+app's data model and re-rendered with this app's Tailwind v4 design tokens and
+Lucide icons. Specifically: src/lib/dashboard.ts adapts the filter/sort logic;
+src/lib/format.ts adapts formatRelativeTime and the label-color helper; and
+src/components/dashboard/{IssueList,PullRequestList,RepoGrid,listRow}.tsx adapt
+the view structure. No gitdeck source files are copied verbatim or bundled.

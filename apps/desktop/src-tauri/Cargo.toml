@@ -1,0 +1,30 @@
+[package]
+name = "newt-todo-desktop"
+version = "0.1.0"
+description = "Newt Todo desktop app"
+authors = ["NewtTheWolf"]
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# The `_lib` suffix keeps the lib name unique from the bin name (Windows quirk).
+name = "newt_todo_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+newt-todo-core = { workspace = true }
+newt-todo-service = { workspace = true }
+newt-todo-auth = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tauri-plugin-oauth = "2.0.0"
+open = "5.3.5"
+uuid = { workspace = true }
+url.workspace = true
+reqwest.workspace = true

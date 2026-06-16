@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/auth", "crates/service", "crates/mcp", "crates/providers", "apps/desktop/src-tauri"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "time", "migrate", "macros"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+wiremock = "0.6"
+keyring = "3"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+newt-todo-core = { path = "crates/core" }
+newt-todo-auth = { path = "crates/auth" }
+newt-todo-providers = { path = "crates/providers" }
+newt-todo-service = { path = "crates/service" }
+schemars = "1"
+rmcp = { version = "1", features = ["server", "transport-io"] }
+anyhow = "1"
+directories = "5"
+tempfile = "3"
