@@ -1,0 +1,44 @@
+# Self-host gitdeck-server.  From the repo root:
+#   GITHUB_TOKEN=ghp_xxx docker compose -f deploy/docker-compose.yml up -d --build
+# Then point the desktop app's Settings -> Server to http://<host>:50061
+services:
+  gitdeck-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: gitdeck-server
+    restart: unless-stopped
+    ports:
+      - "50061:50061"
+    environment:
+      GITDECK_BIND: "0.0.0.0:50061"
+      # Default: sqlite on the mounted volume. To use Postgres instead, comment the
+      # sqlite line, uncomment the postgres line + depends_on below, and run the
+      # postgres service (see deploy/README.md). GITDECK_DB accepts a path or any DSN.
+      GITDECK_DB: "/home/gitdeck/data/gitdeck.db"
+      # GITDECK_DB: "postgres://gitdeck:${POSTGRES_PASSWORD}@postgres:5432/gitdeck"
+      # GitHub token used for all GitHub-backed calls (single-token hosting for now).
+      GITHUB_TOKEN: "${GITHUB_TOKEN:?set GITHUB_TOKEN in your env or .env}"
+      # Optional: require clients to send Authorization: Bearer <key>.
+      GITDECK_API_KEY: "${GITDECK_API_KEY:-}"
+    volumes:
+      - gitdeck-data:/home/gitdeck/data
+    # depends_on:
+    #   - postgres
+
+  # Postgres backend (Phase J3 / SeaORM). Enabled by pointing GITDECK_DB at it above.
+  # Start it with: docker compose -f deploy/docker-compose.yml --profile postgres up -d
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gitdeck
+      POSTGRES_USER: gitdeck
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
+    volumes:
+      - gitdeck-pg:/var/lib/postgresql/data
+
+volumes:
+  gitdeck-data:
+  gitdeck-pg:

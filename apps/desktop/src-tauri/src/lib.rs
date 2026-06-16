@@ -2,8 +2,10 @@ use newt_todo_auth::{
     build_authorize_url, exchange_code, AuthRequest, KeyringTokenStore, TokenRequest, TokenStore,
 };
 use newt_todo_core::{
-    Account, AccountDraft, ProviderKind, RemoteIssue, RemotePullRequest, RemoteRepo, SyncReport,
+    Account, AccountDraft, ProviderKind, RemoteIssue, RemotePullRequest, RemoteRepo, SyncChange,
+    SyncReport, LOCAL_USER,
 };
+use serde::Deserialize;
 use newt_todo_service::{
     BoardDto, BoardIdParam, CardDto, CodeHitDto, ColumnDto, CommentDto, ContributorDto,
     CreateBoardParams, CreateColumnParams, CreateTaskParams, DigestDto, ForkDto,
@@ -643,6 +645,65 @@ async fn remove_card(params: RemoveCardParams, state: State<'_, AppState>) -> Re
         .map_err(|e| e.to_string())
 }
 
+// --- local <-> remote sync (embedded store, as LOCAL_USER) ------------------
+
+/// A reference to a synced row (kind + id). Used to mark rows as no longer dirty
+/// after a successful push. A small serde struct because Tauri/JSON can't carry a
+/// `(String, String)` tuple cleanly.
+#[derive(Debug, Deserialize)]
+struct SyncRef {
+    kind: String,
+    id: String,
+}
+
+/// Collect the local rows that are dirty (including tombstones) so the frontend
+/// can push them to the remote server.
+#[tauri::command]
+async fn sync_local_dirty(state: State<'_, AppState>) -> Result<Vec<SyncChange>, String> {
+    state
+        .service
+        .store()
+        .dirty_changes(LOCAL_USER)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Apply remote changes (from a pull/watch) to the local store via LWW upsert.
+/// Returns the number of changes that actually applied.
+#[tauri::command]
+async fn sync_apply_remote(
+    changes: Vec<SyncChange>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let store = state.service.store();
+    let mut applied = 0usize;
+    for change in &changes {
+        if store
+            .apply_change(LOCAL_USER, change)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            applied += 1;
+        }
+    }
+    Ok(applied)
+}
+
+/// Clear the dirty flag on the given rows after they were successfully pushed.
+#[tauri::command]
+async fn sync_mark_synced(
+    refs: Vec<SyncRef>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let ids: Vec<(String, String)> = refs.into_iter().map(|r| (r.kind, r.id)).collect();
+    state
+        .service
+        .store()
+        .mark_synced_changes(LOCAL_USER, &ids)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Parse the `code` and `state` query parameters out of an OAuth callback URL.
 ///
 /// Returns `Err` with a descriptive message if the URL can't be parsed or the
@@ -860,7 +921,10 @@ pub fn run() {
             delete_column,
             reorder_columns,
             place_card,
-            remove_card
+            remove_card,
+            sync_local_dirty,
+            sync_apply_remote,
+            sync_mark_synced
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -868,7 +932,24 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_callback;
+    use super::{parse_callback, SyncRef};
+
+    #[test]
+    fn sync_ref_deserializes_and_maps_to_tuple() {
+        // The frontend sends `[{ "kind": "...", "id": "..." }]`; verify it
+        // deserializes and maps to the `(kind, id)` tuple `mark_synced_changes` wants.
+        let refs: Vec<SyncRef> =
+            serde_json::from_str(r#"[{"kind":"task","id":"t1"},{"kind":"board","id":"b1"}]"#)
+                .unwrap();
+        let ids: Vec<(String, String)> = refs.into_iter().map(|r| (r.kind, r.id)).collect();
+        assert_eq!(
+            ids,
+            vec![
+                ("task".to_string(), "t1".to_string()),
+                ("board".to_string(), "b1".to_string()),
+            ]
+        );
+    }
 
     #[test]
     fn parse_callback_extracts_code_and_state() {

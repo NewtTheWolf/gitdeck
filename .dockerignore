@@ -1,0 +1,13 @@
+# Keep the Docker build context small. The builder compiles from source, so
+# exclude all build outputs, deps, and local data.
+.git
+target
+**/target
+**/node_modules
+**/dist
+apps/desktop/src-tauri/gen
+*.db
+*.db-*
+.DS_Store
+# Frontend isn't needed to build the server binary.
+apps/desktop/node_modules

@@ -1,0 +1,49 @@
+[package]
+name = "newt-todo-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "newt_todo_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gitdeck-server"
+path = "src/bin/gitdeck-server.rs"
+
+[dependencies]
+newt-todo-core.workspace = true
+newt-todo-auth.workspace = true
+newt-todo-service.workspace = true
+tonic.workspace = true
+tonic-web.workspace = true
+prost.workspace = true
+tower-http.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+sea-orm.workspace = true
+sea-orm-migration.workspace = true
+uuid.workspace = true
+argon2.workspace = true
+jsonwebtoken.workspace = true
+rand.workspace = true
+tower = "0.5"
+tower-layer = "0.3"
+
+[build-dependencies]
+tonic-build.workspace = true
+protobuf-src.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt-multi-thread"] }
+tokio-stream = { version = "0.1", features = ["net", "sync"] }

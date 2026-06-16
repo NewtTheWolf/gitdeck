@@ -1,7 +1,7 @@
 use newt_todo_auth::TokenStore;
 use newt_todo_core::{
     sync_account as core_sync_account, Account, AccountDraft, Provider, ProviderKind, RemoteIssue,
-    RemotePullRequest, RemoteRepo, Store, SyncReport, TaskDraft, TaskFilter, TaskPatch,
+    RemotePullRequest, RemoteRepo, Store, SyncReport, TaskDraft, TaskFilter, TaskPatch, LOCAL_USER,
 };
 use newt_todo_providers::GitHubProvider;
 use time::format_description::well_known::Rfc3339;
@@ -28,22 +28,45 @@ impl TaskService {
         Self { store }
     }
 
+    /// Direct access to the underlying core [`Store`], used by the server's
+    /// cross-device sync RPCs (Phase K3) which operate on the sync-change set.
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
     fn now() -> OffsetDateTime {
         OffsetDateTime::now_utc()
     }
 
     pub async fn create(&self, p: CreateTaskParams) -> anyhow::Result<TaskDto> {
+        self.create_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped task create (server multi-user). The new task is owned by `user_id`.
+    pub async fn create_for(&self, user_id: &str, p: CreateTaskParams) -> anyhow::Result<TaskDto> {
         let mut draft = TaskDraft::new(p.title);
         draft.body = p.body.unwrap_or_default();
         draft.labels = p.labels.unwrap_or_default();
         if let Some(due) = p.due_at {
             draft.due_at = Some(OffsetDateTime::parse(&due, &Rfc3339)?);
         }
-        let task = self.store.create_task(draft, Self::now()).await?;
+        let task = self
+            .store
+            .create_task_for(user_id, draft, Self::now())
+            .await?;
         Ok(task.into())
     }
 
     pub async fn list(&self, p: ListTasksParams) -> anyhow::Result<Vec<TaskDto>> {
+        self.list_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped task list: only `user_id`'s tasks.
+    pub async fn list_for(
+        &self,
+        user_id: &str,
+        p: ListTasksParams,
+    ) -> anyhow::Result<Vec<TaskDto>> {
         let status = p.status.as_deref().map(parse_status).transpose()?;
         let filter = TaskFilter {
             status,
@@ -51,16 +74,26 @@ impl TaskService {
             query: p.query,
             include_deleted: false,
         };
-        let tasks = self.store.list_tasks(filter).await?;
+        let tasks = self.store.list_tasks_for(user_id, filter).await?;
         Ok(tasks.into_iter().map(Into::into).collect())
     }
 
     pub async fn get(&self, id: &str) -> anyhow::Result<Option<TaskDto>> {
+        self.get_for(LOCAL_USER, id).await
+    }
+
+    /// User-scoped get: returns the task only if owned by `user_id`.
+    pub async fn get_for(&self, user_id: &str, id: &str) -> anyhow::Result<Option<TaskDto>> {
         let uuid = Uuid::parse_str(id)?;
-        Ok(self.store.get_task(uuid).await?.map(Into::into))
+        Ok(self.store.get_task_for(user_id, uuid).await?.map(Into::into))
     }
 
     pub async fn update(&self, p: UpdateTaskParams) -> anyhow::Result<TaskDto> {
+        self.update_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped task update: errors with NotFound if not owned by `user_id`.
+    pub async fn update_for(&self, user_id: &str, p: UpdateTaskParams) -> anyhow::Result<TaskDto> {
         let uuid = Uuid::parse_str(&p.id)?;
         let status = p.status.as_deref().map(parse_status).transpose()?;
         let due_at = if p.clear_due {
@@ -78,26 +111,44 @@ impl TaskService {
             labels: p.labels,
             due_at,
         };
-        let task = self.store.update_task(uuid, patch, Self::now()).await?;
+        let task = self
+            .store
+            .update_task_for(user_id, uuid, patch, Self::now())
+            .await?;
         Ok(task.into())
     }
 
     pub async fn complete(&self, p: TaskIdParam) -> anyhow::Result<TaskDto> {
-        self.update(UpdateTaskParams {
-            id: p.id,
-            title: None,
-            body: None,
-            status: Some("done".into()),
-            labels: None,
-            due_at: None,
-            clear_due: false,
-        })
+        self.complete_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped complete: marks `user_id`'s task done (via `update_for`).
+    pub async fn complete_for(&self, user_id: &str, p: TaskIdParam) -> anyhow::Result<TaskDto> {
+        self.update_for(
+            user_id,
+            UpdateTaskParams {
+                id: p.id,
+                title: None,
+                body: None,
+                status: Some("done".into()),
+                labels: None,
+                due_at: None,
+                clear_due: false,
+            },
+        )
         .await
     }
 
     pub async fn delete(&self, p: TaskIdParam) -> anyhow::Result<()> {
+        self.delete_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped soft-delete: errors with NotFound if not owned by `user_id`.
+    pub async fn delete_for(&self, user_id: &str, p: TaskIdParam) -> anyhow::Result<()> {
         let uuid = Uuid::parse_str(&p.id)?;
-        self.store.delete_task(uuid, Self::now()).await?;
+        self.store
+            .delete_task_for(user_id, uuid, Self::now())
+            .await?;
         Ok(())
     }
 
@@ -120,7 +171,12 @@ impl TaskService {
     /// List boards. Returned DTOs carry an EMPTY `columns` vec (cheap overview);
     /// use `get_board` to fetch a board with its ordered columns and manual cards.
     pub async fn list_boards(&self) -> anyhow::Result<Vec<BoardDto>> {
-        let boards = self.store.list_boards().await?;
+        self.list_boards_for(LOCAL_USER).await
+    }
+
+    /// User-scoped board list: only `user_id`'s boards (empty `columns` overview).
+    pub async fn list_boards_for(&self, user_id: &str) -> anyhow::Result<Vec<BoardDto>> {
+        let boards = self.store.list_boards_for(user_id).await?;
         Ok(boards
             .into_iter()
             .map(|b| BoardDto::from_parts(b, Vec::new()))
@@ -129,8 +185,18 @@ impl TaskService {
 
     /// Assemble a board with its ordered columns, each carrying its ordered manual cards.
     pub async fn get_board(&self, p: BoardIdParam) -> anyhow::Result<Option<BoardDto>> {
+        self.get_board_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped board fetch: returns the board (with columns/cards) only if
+    /// owned by `user_id`; columns/cards are reached through the owned board.
+    pub async fn get_board_for(
+        &self,
+        user_id: &str,
+        p: BoardIdParam,
+    ) -> anyhow::Result<Option<BoardDto>> {
         let uuid = Uuid::parse_str(&p.id)?;
-        let Some(board) = self.store.get_board(uuid).await? else {
+        let Some(board) = self.store.get_board_for(user_id, uuid).await? else {
             return Ok(None);
         };
         let columns = self.store.list_columns(uuid).await?;
@@ -154,61 +220,137 @@ impl TaskService {
     }
 
     pub async fn create_board(&self, p: CreateBoardParams) -> anyhow::Result<BoardDto> {
-        let board = self.store.create_board(&p.name, Self::now()).await?;
+        self.create_board_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped board create. The new board is owned by `user_id`.
+    pub async fn create_board_for(
+        &self,
+        user_id: &str,
+        p: CreateBoardParams,
+    ) -> anyhow::Result<BoardDto> {
+        let board = self
+            .store
+            .create_board_for(user_id, &p.name, Self::now())
+            .await?;
         Ok(BoardDto::from_parts(board, Vec::new()))
     }
 
     pub async fn rename_board(&self, p: RenameBoardParams) -> anyhow::Result<BoardDto> {
+        self.rename_board_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped rename: errors with NotFound if not owned by `user_id`.
+    pub async fn rename_board_for(
+        &self,
+        user_id: &str,
+        p: RenameBoardParams,
+    ) -> anyhow::Result<BoardDto> {
         let uuid = Uuid::parse_str(&p.id)?;
-        let board = self.store.rename_board(uuid, &p.name, Self::now()).await?;
+        let board = self
+            .store
+            .rename_board_for(user_id, uuid, &p.name, Self::now())
+            .await?;
         Ok(BoardDto::from_parts(board, Vec::new()))
     }
 
     pub async fn delete_board(&self, p: BoardIdParam) -> anyhow::Result<()> {
+        self.delete_board_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped soft-delete: errors with NotFound if not owned by `user_id`.
+    pub async fn delete_board_for(&self, user_id: &str, p: BoardIdParam) -> anyhow::Result<()> {
         let uuid = Uuid::parse_str(&p.id)?;
-        self.store.delete_board(uuid).await?;
+        self.store
+            .delete_board_for(user_id, uuid, Self::now())
+            .await?;
         Ok(())
     }
 
     pub async fn reorder_boards(&self, p: ReorderBoardsParams) -> anyhow::Result<()> {
+        self.reorder_boards_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped reorder: only affects boards owned by `user_id`.
+    pub async fn reorder_boards_for(
+        &self,
+        user_id: &str,
+        p: ReorderBoardsParams,
+    ) -> anyhow::Result<()> {
         let ids = p
             .ordered_ids
             .iter()
             .map(|s| Uuid::parse_str(s))
             .collect::<Result<Vec<_>, _>>()?;
-        self.store.reorder_boards(&ids, Self::now()).await?;
+        self.store
+            .reorder_boards_for(user_id, &ids, Self::now())
+            .await?;
         Ok(())
     }
 
     // --- columns --------------------------------------------------------------
 
     pub async fn create_column(&self, p: CreateColumnParams) -> anyhow::Result<ColumnDto> {
+        self.create_column_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped column create. Core verifies the parent board belongs to `user_id`.
+    pub async fn create_column_for(
+        &self,
+        user_id: &str,
+        p: CreateColumnParams,
+    ) -> anyhow::Result<ColumnDto> {
         let board_id = Uuid::parse_str(&p.board_id)?;
         let filter = p.filter.unwrap_or_else(|| serde_json::json!({}));
         let column = self
             .store
-            .create_column(board_id, &p.name, &filter, Self::now())
+            .create_column_for(user_id, board_id, &p.name, &filter, Self::now())
             .await?;
         Ok(ColumnDto::from_parts(column, Vec::new()))
     }
 
     pub async fn update_column(&self, p: UpdateColumnParams) -> anyhow::Result<ColumnDto> {
+        self.update_column_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped column update. Core verifies the column's board belongs to `user_id`.
+    pub async fn update_column_for(
+        &self,
+        user_id: &str,
+        p: UpdateColumnParams,
+    ) -> anyhow::Result<ColumnDto> {
         let id = Uuid::parse_str(&p.id)?;
         let filter = p.filter.unwrap_or_else(|| serde_json::json!({}));
         let column = self
             .store
-            .update_column(id, &p.name, &filter, Self::now())
+            .update_column_for(user_id, id, &p.name, &filter, Self::now())
             .await?;
         Ok(ColumnDto::from_parts(column, Vec::new()))
     }
 
     pub async fn delete_column(&self, id: &str) -> anyhow::Result<()> {
+        self.delete_column_for(LOCAL_USER, id).await
+    }
+
+    /// User-scoped column soft-delete. Core verifies the column's board belongs to `user_id`.
+    pub async fn delete_column_for(&self, user_id: &str, id: &str) -> anyhow::Result<()> {
         let uuid = Uuid::parse_str(id)?;
-        self.store.delete_column(uuid, Self::now()).await?;
+        self.store
+            .delete_column_for(user_id, uuid, Self::now())
+            .await?;
         Ok(())
     }
 
     pub async fn reorder_columns(&self, p: ReorderColumnsParams) -> anyhow::Result<()> {
+        self.reorder_columns_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped column reorder. Core verifies the board belongs to `user_id`.
+    pub async fn reorder_columns_for(
+        &self,
+        user_id: &str,
+        p: ReorderColumnsParams,
+    ) -> anyhow::Result<()> {
         let board_id = Uuid::parse_str(&p.board_id)?;
         let ids = p
             .ordered_ids
@@ -216,7 +358,7 @@ impl TaskService {
             .map(|s| Uuid::parse_str(s))
             .collect::<Result<Vec<_>, _>>()?;
         self.store
-            .reorder_columns(board_id, &ids, Self::now())
+            .reorder_columns_for(user_id, board_id, &ids, Self::now())
             .await?;
         Ok(())
     }
@@ -224,19 +366,33 @@ impl TaskService {
     // --- cards ----------------------------------------------------------------
 
     pub async fn place_card(&self, p: PlaceCardParams) -> anyhow::Result<CardDto> {
+        self.place_card_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped card placement. Core verifies the board belongs to `user_id`.
+    pub async fn place_card_for(
+        &self,
+        user_id: &str,
+        p: PlaceCardParams,
+    ) -> anyhow::Result<CardDto> {
         let board_id = Uuid::parse_str(&p.board_id)?;
         let column_id = Uuid::parse_str(&p.column_id)?;
         let card = self
             .store
-            .place_card(board_id, column_id, &p.item_key, Self::now())
+            .place_card_for(user_id, board_id, column_id, &p.item_key, Self::now())
             .await?;
         Ok(card.into())
     }
 
     pub async fn remove_card(&self, p: RemoveCardParams) -> anyhow::Result<()> {
+        self.remove_card_for(LOCAL_USER, p).await
+    }
+
+    /// User-scoped card removal. Core verifies the board belongs to `user_id`.
+    pub async fn remove_card_for(&self, user_id: &str, p: RemoveCardParams) -> anyhow::Result<()> {
         let board_id = Uuid::parse_str(&p.board_id)?;
         self.store
-            .remove_card(board_id, &p.item_key, Self::now())
+            .remove_card_for(user_id, board_id, &p.item_key, Self::now())
             .await?;
         Ok(())
     }

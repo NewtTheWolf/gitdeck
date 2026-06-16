@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { useSyncExternalStore, type ComponentType } from "react";
 import { NavLink, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -18,6 +18,13 @@ import {
   type LucideProps,
 } from "lucide-react";
 import { useAccounts } from "../contexts/AccountContext";
+import { isRemote, subscribeServerConfig } from "../lib/transport";
+import { SyncStatusBadge } from "./SyncStatusBadge";
+
+/** Live `isRemote()` that re-renders when the server config changes. */
+function useIsRemote(): boolean {
+  return useSyncExternalStore(subscribeServerConfig, isRemote, isRemote);
+}
 
 type NavItem = { to: string; key: string; icon: ComponentType<LucideProps> };
 
@@ -131,6 +138,7 @@ function AccountArea() {
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const { t, i18n } = useTranslation();
+  const remote = useIsRemote();
 
   function toggleLocale() {
     const next = i18n.language === "en" ? "de" : "en";
@@ -195,6 +203,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <AccountArea />
+
+        {remote && (
+          <div className="flex items-center gap-2 px-1">
+            <SyncStatusBadge remote compact />
+          </div>
+        )}
 
         <button
           type="button"

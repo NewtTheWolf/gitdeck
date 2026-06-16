@@ -1,0 +1,834 @@
+syntax = "proto3";
+
+package gitdeck.v1;
+
+// The Gitdeck service mirrors the TaskService business logic 1:1. Every RPC is
+// unary. Request/response messages mirror the DTO/param struct fields used by
+// the corresponding TaskService method.
+service Gitdeck {
+  // --- auth (server multi-user; Phase K1) ----------------------------------
+  // Register and Login are EXEMPT from the auth interceptor. SetGithubToken and
+  // GetMe require a valid bearer token when GITDECK_AUTH=multi.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc SetGithubToken(SetGithubTokenRequest) returns (SetGithubTokenResponse);
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+
+  // --- local todos ---------------------------------------------------------
+  rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc UpdateTask(UpdateTaskRequest) returns (TaskResponse);
+  rpc CompleteTask(TaskIdRequest) returns (TaskResponse);
+  rpc DeleteTask(TaskIdRequest) returns (Empty);
+
+  // --- accounts ------------------------------------------------------------
+  rpc ListAccounts(Empty) returns (ListAccountsResponse);
+  rpc CreateAccount(CreateAccountRequest) returns (AccountMessage);
+  rpc DeleteAccount(AccountIdRequest) returns (Empty);
+
+  // --- sync ----------------------------------------------------------------
+  rpc SyncAccount(AccountIdRequest) returns (SyncReportMessage);
+
+  // --- dashboard reads -----------------------------------------------------
+  rpc ListRepos(AccountIdRequest) returns (ListReposResponse);
+  rpc ListIssues(AccountIdRequest) returns (ListIssuesResponse);
+  rpc ListPullRequests(AccountIdRequest) returns (ListPullRequestsResponse);
+
+  // --- boards --------------------------------------------------------------
+  rpc ListBoards(Empty) returns (ListBoardsResponse);
+  rpc GetBoard(BoardIdRequest) returns (GetBoardResponse);
+  rpc CreateBoard(CreateBoardRequest) returns (BoardMessage);
+  rpc RenameBoard(RenameBoardRequest) returns (BoardMessage);
+  rpc DeleteBoard(BoardIdRequest) returns (Empty);
+  rpc ReorderBoards(ReorderBoardsRequest) returns (Empty);
+
+  // --- columns -------------------------------------------------------------
+  rpc CreateColumn(CreateColumnRequest) returns (ColumnMessage);
+  rpc UpdateColumn(UpdateColumnRequest) returns (ColumnMessage);
+  rpc DeleteColumn(ColumnIdRequest) returns (Empty);
+  rpc ReorderColumns(ReorderColumnsRequest) returns (Empty);
+
+  // --- cards ---------------------------------------------------------------
+  rpc PlaceCard(PlaceCardRequest) returns (CardMessage);
+  rpc RemoveCard(RemoveCardRequest) returns (Empty);
+
+  // --- notifications -------------------------------------------------------
+  rpc ListNotifications(AccountIdRequest) returns (ListNotificationsResponse);
+  rpc MarkNotificationRead(MarkNotificationReadRequest) returns (Empty);
+
+  // --- CI workflow runs ----------------------------------------------------
+  rpc ListWorkflowRuns(ListWorkflowRunsRequest) returns (ListWorkflowRunsResponse);
+
+  // --- repository detail ---------------------------------------------------
+  rpc GetRepoDetail(RepoRefRequest) returns (RepoDetailMessage);
+  rpc ListReleases(RepoRefRequest) returns (ListReleasesResponse);
+  rpc ListForks(RepoRefRequest) returns (ListForksResponse);
+  rpc ListContributors(RepoRefRequest) returns (ListContributorsResponse);
+  rpc GetLanguages(RepoRefRequest) returns (GetLanguagesResponse);
+
+  // --- traffic -------------------------------------------------------------
+  rpc GetTrafficViews(RepoRefRequest) returns (GetTrafficResponse);
+  rpc GetTrafficClones(RepoRefRequest) returns (GetTrafficResponse);
+  rpc ListReferrers(RepoRefRequest) returns (ListReferrersResponse);
+  rpc ListPaths(RepoRefRequest) returns (ListPathsResponse);
+
+  // --- mentions / search ---------------------------------------------------
+  rpc SearchCode(SearchRequest) returns (SearchCodeResponse);
+  rpc SearchIssues(SearchRequest) returns (ListIssuesResponse);
+
+  // --- in-app issue/PR detail ----------------------------------------------
+  rpc GetIssue(IssueRefRequest) returns (GetIssueResponse);
+  rpc GetPullRequest(IssueRefRequest) returns (GetPullRequestResponse);
+  rpc ListIssueComments(IssueRefRequest) returns (ListCommentsResponse);
+  rpc ListPullReviews(IssueRefRequest) returns (ListReviewsResponse);
+
+  // --- triage write actions ------------------------------------------------
+  rpc SetIssueState(SetIssueStateRequest) returns (Empty);
+  rpc AddIssueLabels(IssueLabelsRequest) returns (Empty);
+  rpc RemoveIssueLabel(RemoveLabelRequest) returns (Empty);
+  rpc AddIssueAssignees(IssueAssigneesRequest) returns (Empty);
+  rpc CreateIssueComment(IssueCommentRequest) returns (CreateIssueCommentResponse);
+
+  // --- daily repo snapshots ------------------------------------------------
+  rpc CaptureSnapshots(AccountIdRequest) returns (CaptureSnapshotsResponse);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+  rpc DailyDigest(AccountIdRequest) returns (DigestMessage);
+
+  // --- cross-device sync (Phase K3) ----------------------------------------
+  // LWW by `updated_at`. PushChanges applies client-dirty rows; PullChanges
+  // returns the user's rows since a cursor; WatchChanges streams changes applied
+  // by OTHER sessions of the same user.
+  rpc PushChanges(PushChangesRequest) returns (PushChangesResponse);
+  rpc PullChanges(PullChangesRequest) returns (PullChangesResponse);
+  rpc WatchChanges(WatchChangesRequest) returns (stream Change);
+}
+
+message Empty {}
+
+// ============================================================================
+// Auth (server multi-user; Phase K1)
+// ============================================================================
+
+message RegisterRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message RegisterResponse {
+  string user_id = 1;
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  // a signed session token (JWT); pass as `authorization: Bearer <token>`.
+  string token = 1;
+}
+
+message SetGithubTokenRequest {
+  string github_token = 1;
+}
+
+message SetGithubTokenResponse {}
+
+message GetMeRequest {}
+
+message GetMeResponse {
+  string user_id = 1;
+  string username = 2;
+  bool has_github_token = 3;
+}
+
+// ============================================================================
+// Local todos
+// ============================================================================
+
+message Task {
+  string id = 1;
+  string title = 2;
+  string body = 3;
+  string status = 4;
+  repeated string labels = 5;
+  optional string due_at = 6;
+  string updated_at = 7;
+  optional string source_url = 8;
+}
+
+message TaskResponse {
+  Task task = 1;
+}
+
+message CreateTaskRequest {
+  string title = 1;
+  optional string body = 2;
+  repeated string labels = 3;
+  optional string due_at = 4;
+}
+
+message ListTasksRequest {
+  optional string status = 1;
+  optional string label = 2;
+  optional string query = 3;
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message GetTaskRequest {
+  string id = 1;
+}
+
+message GetTaskResponse {
+  optional Task task = 1;
+}
+
+message TaskIdRequest {
+  string id = 1;
+}
+
+message UpdateTaskRequest {
+  string id = 1;
+  optional string title = 2;
+  optional string body = 3;
+  optional string status = 4;
+  // labels are replaced wholesale when `set_labels` is true.
+  bool set_labels = 5;
+  repeated string labels = 6;
+  optional string due_at = 7;
+  bool clear_due = 8;
+}
+
+// ============================================================================
+// Accounts
+// ============================================================================
+
+message AccountMessage {
+  string id = 1;
+  string provider = 2;
+  string display_name = 3;
+  optional string base_url = 4;
+  // config is opaque JSON, carried as a string.
+  string config_json = 5;
+  string created_at = 6;
+}
+
+message ListAccountsResponse {
+  repeated AccountMessage accounts = 1;
+}
+
+message CreateAccountRequest {
+  string provider = 1;
+  string display_name = 2;
+  optional string base_url = 3;
+  // opaque JSON object; "{}" when absent.
+  string config_json = 4;
+}
+
+message AccountIdRequest {
+  string id = 1;
+}
+
+// ============================================================================
+// Sync
+// ============================================================================
+
+message SyncReportMessage {
+  uint64 pulled = 1;
+  uint64 pushed = 2;
+}
+
+// ============================================================================
+// Dashboard reads
+// ============================================================================
+
+message RemoteRepoMessage {
+  string id = 1;
+  string full_name = 2;
+  optional string description = 3;
+  string html_url = 4;
+  uint64 stars = 5;
+  uint64 open_issues = 6;
+  optional string language = 7;
+  bool is_private = 8;
+  bool is_fork = 9;
+  string updated_at = 10;
+}
+
+message ListReposResponse {
+  repeated RemoteRepoMessage repos = 1;
+}
+
+message LabelMessage {
+  string name = 1;
+  string color = 2;
+}
+
+message RemoteIssueMessage {
+  uint64 number = 1;
+  string title = 2;
+  string html_url = 3;
+  string state = 4;
+  string author_login = 5;
+  optional string author_avatar_url = 6;
+  string repo_name_with_owner = 7;
+  string created_at = 8;
+  string updated_at = 9;
+  uint64 comments_count = 10;
+  repeated LabelMessage labels = 11;
+  repeated string assignees = 12;
+}
+
+message ListIssuesResponse {
+  repeated RemoteIssueMessage issues = 1;
+}
+
+message RemotePullRequestMessage {
+  uint64 number = 1;
+  string title = 2;
+  string html_url = 3;
+  string state = 4;
+  string author_login = 5;
+  optional string author_avatar_url = 6;
+  string repo_name_with_owner = 7;
+  string created_at = 8;
+  string updated_at = 9;
+  uint64 comments_count = 10;
+  repeated LabelMessage labels = 11;
+  repeated string assignees = 12;
+  bool is_draft = 13;
+}
+
+message ListPullRequestsResponse {
+  repeated RemotePullRequestMessage pull_requests = 1;
+}
+
+// ============================================================================
+// Boards / columns / cards
+// ============================================================================
+
+message Card {
+  string id = 1;
+  string item_key = 2;
+  int64 position = 3;
+}
+
+message Column {
+  string id = 1;
+  string name = 2;
+  int64 position = 3;
+  // opaque smart-filter JSON, carried as a string.
+  string filter_json = 4;
+  string created_at = 5;
+  repeated Card cards = 6;
+}
+
+message Board {
+  string id = 1;
+  string name = 2;
+  int64 position = 3;
+  string created_at = 4;
+  string updated_at = 5;
+  repeated Column columns = 6;
+}
+
+message BoardMessage {
+  Board board = 1;
+}
+
+message ColumnMessage {
+  Column column = 1;
+}
+
+message CardMessage {
+  Card card = 1;
+}
+
+message ListBoardsResponse {
+  repeated Board boards = 1;
+}
+
+message BoardIdRequest {
+  string id = 1;
+}
+
+message GetBoardResponse {
+  optional Board board = 1;
+}
+
+message CreateBoardRequest {
+  string name = 1;
+}
+
+message RenameBoardRequest {
+  string id = 1;
+  string name = 2;
+}
+
+message ReorderBoardsRequest {
+  repeated string ordered_ids = 1;
+}
+
+message CreateColumnRequest {
+  string board_id = 1;
+  string name = 2;
+  // opaque filter JSON; "{}" when absent.
+  optional string filter_json = 3;
+}
+
+message UpdateColumnRequest {
+  string id = 1;
+  string name = 2;
+  optional string filter_json = 3;
+}
+
+message ColumnIdRequest {
+  string id = 1;
+}
+
+message ReorderColumnsRequest {
+  string board_id = 1;
+  repeated string ordered_ids = 2;
+}
+
+message PlaceCardRequest {
+  string board_id = 1;
+  string column_id = 2;
+  string item_key = 3;
+}
+
+message RemoveCardRequest {
+  string board_id = 1;
+  string item_key = 2;
+}
+
+// ============================================================================
+// Notifications
+// ============================================================================
+
+message NotificationMessage {
+  string id = 1;
+  string repo_name_with_owner = 2;
+  string subject_title = 3;
+  string subject_type = 4;
+  optional string subject_url = 5;
+  string reason = 6;
+  bool unread = 7;
+  string updated_at = 8;
+}
+
+message ListNotificationsResponse {
+  repeated NotificationMessage notifications = 1;
+}
+
+message MarkNotificationReadRequest {
+  string id = 1;
+  string thread_id = 2;
+}
+
+// ============================================================================
+// CI workflow runs
+// ============================================================================
+
+message WorkflowRunMessage {
+  uint64 id = 1;
+  optional string name = 2;
+  optional string head_branch = 3;
+  string status = 4;
+  optional string conclusion = 5;
+  string html_url = 6;
+  string created_at = 7;
+  string updated_at = 8;
+  optional string event = 9;
+}
+
+message ListWorkflowRunsRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  optional uint32 per_page = 4;
+}
+
+message ListWorkflowRunsResponse {
+  repeated WorkflowRunMessage runs = 1;
+}
+
+// ============================================================================
+// Repository detail
+// ============================================================================
+
+message RepoRefRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  optional uint32 per_page = 4;
+}
+
+message RepoDetailMessage {
+  string full_name = 1;
+  optional string description = 2;
+  string html_url = 3;
+  optional string homepage = 4;
+  optional string language = 5;
+  uint64 stars = 6;
+  uint64 forks = 7;
+  uint64 open_issues = 8;
+  uint64 watchers = 9;
+  string default_branch = 10;
+  optional string license = 11;
+  repeated string topics = 12;
+  string owner_login = 13;
+  optional string owner_avatar_url = 14;
+  bool is_private = 15;
+  bool is_fork = 16;
+  bool is_archived = 17;
+  uint64 size = 18;
+  optional string pushed_at = 19;
+  optional string created_at = 20;
+  optional string updated_at = 21;
+}
+
+message ReleaseMessage {
+  uint64 id = 1;
+  string tag_name = 2;
+  optional string name = 3;
+  string html_url = 4;
+  optional string body = 5;
+  bool draft = 6;
+  bool prerelease = 7;
+  optional string published_at = 8;
+  optional string author_login = 9;
+}
+
+message ListReleasesResponse {
+  repeated ReleaseMessage releases = 1;
+}
+
+message ForkMessage {
+  string full_name = 1;
+  string html_url = 2;
+  uint64 stars = 3;
+  optional string pushed_at = 4;
+  string owner_login = 5;
+}
+
+message ListForksResponse {
+  repeated ForkMessage forks = 1;
+}
+
+message ContributorMessage {
+  string login = 1;
+  optional string avatar_url = 2;
+  string html_url = 3;
+  uint64 contributions = 4;
+}
+
+message ListContributorsResponse {
+  repeated ContributorMessage contributors = 1;
+}
+
+message LanguageMessage {
+  string name = 1;
+  uint64 bytes = 2;
+}
+
+message GetLanguagesResponse {
+  repeated LanguageMessage languages = 1;
+}
+
+// ============================================================================
+// Traffic
+// ============================================================================
+
+message TrafficDayMessage {
+  string timestamp = 1;
+  uint64 count = 2;
+  uint64 uniques = 3;
+}
+
+message TrafficMessage {
+  uint64 count = 1;
+  uint64 uniques = 2;
+  repeated TrafficDayMessage days = 3;
+}
+
+message GetTrafficResponse {
+  // absent when the account can't read traffic (no push access).
+  optional TrafficMessage traffic = 1;
+}
+
+message ReferrerMessage {
+  string referrer = 1;
+  uint64 count = 2;
+  uint64 uniques = 3;
+}
+
+message ListReferrersResponse {
+  repeated ReferrerMessage referrers = 1;
+}
+
+message PathMessage {
+  string path = 1;
+  string title = 2;
+  uint64 count = 3;
+  uint64 uniques = 4;
+}
+
+message ListPathsResponse {
+  repeated PathMessage paths = 1;
+}
+
+// ============================================================================
+// Mentions / search
+// ============================================================================
+
+message SearchRequest {
+  string id = 1;
+  string query = 2;
+  optional uint32 per_page = 3;
+}
+
+message CodeHitMessage {
+  string repo_name_with_owner = 1;
+  string path = 2;
+  string html_url = 3;
+  string name = 4;
+}
+
+message SearchCodeResponse {
+  repeated CodeHitMessage hits = 1;
+}
+
+// ============================================================================
+// In-app issue/PR detail
+// ============================================================================
+
+message UserMessage {
+  string login = 1;
+  optional string avatar_url = 2;
+}
+
+message CommentMessage {
+  uint64 id = 1;
+  string author_login = 2;
+  optional string author_avatar_url = 3;
+  string body = 4;
+  string created_at = 5;
+  string updated_at = 6;
+  string html_url = 7;
+}
+
+message ListCommentsResponse {
+  repeated CommentMessage comments = 1;
+}
+
+message ReviewMessage {
+  uint64 id = 1;
+  string reviewer_login = 2;
+  optional string reviewer_avatar_url = 3;
+  string state = 4;
+  optional string body = 5;
+  optional string submitted_at = 6;
+  string html_url = 7;
+}
+
+message ListReviewsResponse {
+  repeated ReviewMessage reviews = 1;
+}
+
+message IssueRefRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  uint64 number = 4;
+  optional uint32 per_page = 5;
+}
+
+message IssueDetailMessage {
+  uint64 number = 1;
+  string title = 2;
+  optional string body = 3;
+  string html_url = 4;
+  string state = 5;
+  string author_login = 6;
+  optional string author_avatar_url = 7;
+  string repo_name_with_owner = 8;
+  string created_at = 9;
+  string updated_at = 10;
+  optional string closed_at = 11;
+  uint64 comments_count = 12;
+  repeated LabelMessage labels = 13;
+  repeated UserMessage assignees = 14;
+  optional string milestone_title = 15;
+}
+
+message GetIssueResponse {
+  optional IssueDetailMessage issue = 1;
+}
+
+message PullRequestDetailMessage {
+  uint64 number = 1;
+  string title = 2;
+  optional string body = 3;
+  string html_url = 4;
+  string state = 5;
+  string author_login = 6;
+  optional string author_avatar_url = 7;
+  string repo_name_with_owner = 8;
+  string created_at = 9;
+  string updated_at = 10;
+  optional string closed_at = 11;
+  uint64 comments_count = 12;
+  repeated LabelMessage labels = 13;
+  repeated UserMessage assignees = 14;
+  optional string milestone_title = 15;
+  bool is_draft = 16;
+  bool merged = 17;
+  optional string mergeable_state = 18;
+  string base_ref = 19;
+  string head_ref = 20;
+  optional uint64 additions = 21;
+  optional uint64 deletions = 22;
+  optional uint64 changed_files = 23;
+  optional uint64 commits = 24;
+  repeated UserMessage requested_reviewers = 25;
+  repeated string requested_teams = 26;
+}
+
+message GetPullRequestResponse {
+  optional PullRequestDetailMessage pull_request = 1;
+}
+
+// ============================================================================
+// Triage write actions
+// ============================================================================
+
+message SetIssueStateRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  uint64 number = 4;
+  string state = 5;
+}
+
+message IssueLabelsRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  uint64 number = 4;
+  repeated string labels = 5;
+}
+
+message RemoveLabelRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  uint64 number = 4;
+  string label = 5;
+}
+
+message IssueAssigneesRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  uint64 number = 4;
+  repeated string assignees = 5;
+}
+
+message IssueCommentRequest {
+  string id = 1;
+  string owner = 2;
+  string repo = 3;
+  uint64 number = 4;
+  string body = 5;
+}
+
+message CreateIssueCommentResponse {
+  // html_url of the created comment.
+  string html_url = 1;
+}
+
+// ============================================================================
+// Daily repo snapshots
+// ============================================================================
+
+message CaptureSnapshotsResponse {
+  uint64 captured = 1;
+}
+
+message SnapshotMessage {
+  string id = 1;
+  string account_id = 2;
+  string repo_full_name = 3;
+  string day = 4;
+  int64 stars = 5;
+  int64 forks = 6;
+  int64 open_issues = 7;
+  string captured_at = 8;
+}
+
+message ListSnapshotsRequest {
+  string id = 1;
+  optional string since_day = 2;
+}
+
+message ListSnapshotsResponse {
+  repeated SnapshotMessage snapshots = 1;
+}
+
+message DigestEntryMessage {
+  string repo_full_name = 1;
+  int64 stars_delta = 2;
+  int64 forks_delta = 3;
+  int64 open_issues_delta = 4;
+  int64 stars = 5;
+  int64 forks = 6;
+  int64 open_issues = 7;
+}
+
+message DigestMessage {
+  optional string day = 1;
+  optional string previous_day = 2;
+  repeated DigestEntryMessage entries = 3;
+}
+
+// ============================================================================
+// Cross-device sync (Phase K3)
+// ============================================================================
+
+// The current state of one synced row. `data_json` carries the entity's
+// remaining persisted fields (those not in this envelope). `board_id`/`column_id`
+// are the parent linkage for columns/cards (empty otherwise).
+message Change {
+  string kind = 1;        // "task" | "board" | "column" | "card"
+  string id = 2;
+  string updated_at = 3;  // RFC3339; the LWW clock
+  bool deleted = 4;       // tombstone
+  string data_json = 5;
+  string board_id = 6;
+  string column_id = 7;
+}
+
+message PushChangesRequest {
+  repeated Change changes = 1;
+}
+
+message PushChangesResponse {
+  uint32 applied = 1;
+  string server_cursor = 2;
+}
+
+message PullChangesRequest {
+  string since_cursor = 1;  // empty = everything
+}
+
+message PullChangesResponse {
+  repeated Change changes = 1;
+  string cursor = 2;
+}
+
+message WatchChangesRequest {}

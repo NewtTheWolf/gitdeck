@@ -22,6 +22,7 @@ import { AccountProvider } from "./contexts/AccountContext";
 import { CommandPaletteProvider } from "./contexts/CommandPaletteContext";
 import CommandPalette from "./components/command/CommandPalette";
 import { queryClient, persister, ONE_DAY } from "./lib/query/client";
+import { SyncProvider } from "./lib/sync/SyncProvider";
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
       client={queryClient}
       persistOptions={{ persister, maxAge: ONE_DAY }}
     >
+      <SyncProvider>
       <AccountProvider>
       <CommandPaletteProvider>
         <Shell>
@@ -66,6 +68,7 @@ export default function App() {
         <CommandPalette />
       </CommandPaletteProvider>
       </AccountProvider>
+      </SyncProvider>
     </PersistQueryClientProvider>
   );
 }
